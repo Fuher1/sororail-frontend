@@ -36,6 +36,36 @@ function escrowValue(arbiter: xdr.ScVal | undefined, state: xdr.ScVal): xdr.ScVa
     })));
 }
 
+describe("EscrowClient.refund", () => {
+  let rpc: ReturnType<typeof mockRpc>;
+
+  beforeEach(() => {
+    rpc = mockRpc();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("encodes the caller's publicKey as an address argument", async () => {
+    rpc.simulateTransaction.mockResolvedValue(simulation(xdr.ScVal.scvVoid()));
+
+    await new EscrowClient(clientOptions).refund();
+
+    expect(rpc.simulateTransaction).toHaveBeenCalledTimes(1);
+    const transaction = rpc.simulateTransaction.mock.calls[0]![0];
+    const invocation = contractInvocation(transaction);
+    expect(Address.fromScAddress(invocation.contractAddress).toString()).toBe(CONTRACT);
+    expect(invocation.functionName.toString()).toBe("refund");
+    expect(invocation.args).toHaveLength(1);
+    expect(Address.fromScVal(invocation.args[0]!).toString()).toBe(PAYER);
+  });
+
+  it("rejects when publicKey is not set", async () => {
+    const client = new EscrowClient({ ...clientOptions, publicKey: undefined });
+    await expect(client.refund()).rejects.toThrow(ValidationError);
+  });
+});
+
 describe("EscrowClient.get", () => {
   let rpc: ReturnType<typeof mockRpc>;
 
