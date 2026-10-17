@@ -36,6 +36,10 @@ function receiptValue(count: number, total: bigint): xdr.ScVal {
   );
 }
 
+function scValType(val: xdr.ScVal): string {
+  return (val as any).type ?? (val as any).switch?.()?.name;
+}
+
 let rpc: ReturnType<typeof mockRpc>;
 beforeEach(() => {
   rpc = mockRpc();
@@ -104,9 +108,9 @@ describe("BatchPayoutClient.execute — happy path", () => {
     expect(invocation.functionName.toString()).toBe("execute");
     // Three args: funder (address), token (address), recipients (vec).
     expect(invocation.args).toHaveLength(3);
-    expect(invocation.args[0]!.switch().name).toBe("scvAddress");
-    expect(invocation.args[1]!.switch().name).toBe("scvAddress");
-    expect(invocation.args[2]!.switch().name).toBe("scvVec");
+    expect(scValType(invocation.args[0]!)).toBe("scvAddress");
+    expect(scValType(invocation.args[1]!)).toBe("scvAddress");
+    expect(scValType(invocation.args[2]!)).toBe("scvVec");
 
     // simulate() should decode the Receipt correctly.
     expect(rpc.simulateTransaction).not.toHaveBeenCalled();
@@ -151,38 +155,114 @@ describe("BatchPayoutClient.execute — happy path", () => {
 });
 
 // ---------------------------------------------------------------------------
-// BatchPayoutClient.executeEqual
+// BatchPayoutClient.executeEqual (Issue #51)
 // ---------------------------------------------------------------------------
 
-describe("BatchPayoutClient.executeEqual — guards", () => {
+describe("BatchPayoutClient.executeEqual — guards and execution", () => {
   it("rejects an empty recipient list before accessing RPC", () => {
+    const client = new BatchPayoutClient(clientOptions);
     expect(() =>
-      new BatchPayoutClient(clientOptions).executeEqual({
-        funder: PAYER, token: TOKEN, recipients: [], amountEach: 100n,
+      client.executeEqual({
+        funder: PAYER,
+        token: TOKEN,
+        recipients: [],
+        amountEach: 100n,
       }),
     ).toThrow(ValidationError);
     expect(() =>
-      new BatchPayoutClient(clientOptions).executeEqual({
-        funder: PAYER, token: TOKEN, recipients: [], amountEach: 100n,
+      client.executeEqual({
+        funder: PAYER,
+        token: TOKEN,
+        recipients: [],
+        amountEach: 100n,
       }),
     ).toThrow("The recipient list is empty.");
     expect(rpc.getAccount).not.toHaveBeenCalled();
+    expect(rpc.simulateTransaction).not.toHaveBeenCalled();
   });
 
   it.each([
     ["zero amount", 0n],
     ["negative amount", -1n],
+    ["large negative amount", -1_000_000n],
   ] as const)(
     "rejects a %s before accessing RPC",
     (_label, amountEach) => {
+      const client = new BatchPayoutClient(clientOptions);
       expect(() =>
-        new BatchPayoutClient(clientOptions).executeEqual({
-          funder: PAYER, token: TOKEN, recipients: [PAYEE], amountEach,
+        client.executeEqual({
+          funder: PAYER,
+          token: TOKEN,
+          recipients: [PAYEE],
+          amountEach,
         }),
       ).toThrow(ValidationError);
+      expect(() =>
+        client.executeEqual({
+          funder: PAYER,
+          token: TOKEN,
+          recipients: [PAYEE],
+          amountEach,
+        }),
+      ).toThrow("amount must be greater than zero");
       expect(rpc.getAccount).not.toHaveBeenCalled();
+      expect(rpc.simulateTransaction).not.toHaveBeenCalled();
     },
   );
+
+  it("distinguishes executeEqual's validation from execute's validation messages", () => {
+    const client = new BatchPayoutClient(clientOptions);
+
+    // execute throws "The payment list is empty." whereas executeEqual throws "The recipient list is empty."
+    expect(() =>
+      client.executeEqual({
+        funder: PAYER,
+        token: TOKEN,
+        recipients: [],
+        amountEach: 100n,
+      }),
+    ).toThrow("The recipient list is empty.");
+
+    expect(() =>
+      client.execute({
+        funder: PAYER,
+        token: TOKEN,
+        recipients: [],
+      }),
+    ).toThrow("The payment list is empty.");
+
+    // execute throws "payment 1 of 1 (to ...)" whereas executeEqual throws "amount must be greater than zero"
+    expect(() =>
+      client.executeEqual({
+        funder: PAYER,
+        token: TOKEN,
+        recipients: [PAYEE],
+        amountEach: 0n,
+      }),
+    ).toThrow("amount must be greater than zero");
+
+    expect(() =>
+      client.execute({
+        funder: PAYER,
+        token: TOKEN,
+        recipients: [{ to: PAYEE, amount: 0n }],
+      }),
+    ).toThrow(`payment 1 of 1 (to ${PAYEE})`);
+  });
+
+  it("rejects non-positive amountEach even with multiple recipients without calling RPC", () => {
+    const client = new BatchPayoutClient(clientOptions);
+    expect(() =>
+      client.executeEqual({
+        funder: PAYER,
+        token: TOKEN,
+        recipients: [PAYEE, RECIPIENT_2],
+        amountEach: 0n,
+      }),
+    ).toThrow(ValidationError);
+    expect(rpc.getAccount).not.toHaveBeenCalled();
+    expect(rpc.simulateTransaction).not.toHaveBeenCalled();
+  });
 
   it("encodes funder, token, recipients vec, and amount, then decodes Receipt", async () => {
     rpc.simulateTransaction.mockResolvedValue(simulation(receiptValue(2, 200n)));
@@ -194,25 +274,59 @@ describe("BatchPayoutClient.executeEqual — guards", () => {
     });
     const invocation = contractInvocation(call);
     expect(invocation.functionName.toString()).toBe("execute_equal");
-    // Four args: funder, token, recipients vec, amount.
+    // Four args: funder (addr), token (addr), recipients (vec), amount (i128).
     expect(invocation.args).toHaveLength(4);
-    expect(invocation.args[3]!.switch().name).toBe("scvI128");
+    expect(scValType(invocation.args[0]!)).toBe("scvAddress");
+    expect(scValType(invocation.args[1]!)).toBe("scvAddress");
+    expect(scValType(invocation.args[2]!)).toBe("scvVec");
+    expect(scValType(invocation.args[3]!)).toBe("scvI128");
+
+    expect(rpc.simulateTransaction).not.toHaveBeenCalled();
     const result = await call.simulate();
     expect(result).toEqual({ count: 2, total: 200n });
+    expect(rpc.simulateTransaction).toHaveBeenCalledTimes(1);
   });
 });
 
 // ---------------------------------------------------------------------------
-// BatchPayoutClient.preview
+// BatchPayoutClient.preview (Issue #52)
 // ---------------------------------------------------------------------------
 
-describe("BatchPayoutClient.preview", () => {
-  it("rejects an empty list before accessing RPC", () => {
-    expect(() => new BatchPayoutClient(clientOptions).preview([])).toThrow(ValidationError);
-    expect(() => new BatchPayoutClient(clientOptions).preview([])).toThrow(
-      "The payment list is empty.",
+describe("BatchPayoutClient.preview — re-runs validate() before issuing read call", () => {
+  it("rejects an empty payment list before accessing RPC", () => {
+    const client = new BatchPayoutClient(clientOptions);
+    expect(() => client.preview([])).toThrow(ValidationError);
+    expect(() => client.preview([])).toThrow("The payment list is empty.");
+    expect(rpc.getAccount).not.toHaveBeenCalled();
+    expect(rpc.simulateTransaction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["zero amount", 0n],
+    ["negative amount", -1n],
+    ["large negative amount", -50_000n],
+  ] as const)(
+    "re-runs validate() and rejects a single payment with %s before accessing RPC",
+    (_label, amount) => {
+      const client = new BatchPayoutClient(clientOptions);
+      expect(() => client.preview([{ to: PAYEE, amount }])).toThrow(ValidationError);
+      expect(() => client.preview([{ to: PAYEE, amount }])).toThrow(
+        `payment 1 of 1 (to ${PAYEE})`,
+      );
+      expect(rpc.getAccount).not.toHaveBeenCalled();
+      expect(rpc.simulateTransaction).not.toHaveBeenCalled();
+    },
+  );
+
+  it("re-runs validate() and identifies offending payment in a multi-payment list before RPC", () => {
+    const client = new BatchPayoutClient(clientOptions);
+    const recipients = [PAYMENT_1, { to: RECIPIENT_2, amount: 0n }];
+    expect(() => client.preview(recipients)).toThrow(ValidationError);
+    expect(() => client.preview(recipients)).toThrow(
+      `payment 2 of 2 (to ${RECIPIENT_2})`,
     );
     expect(rpc.getAccount).not.toHaveBeenCalled();
+    expect(rpc.simulateTransaction).not.toHaveBeenCalled();
   });
 
   it("calls preview on-chain and decodes the Receipt", async () => {
@@ -223,7 +337,13 @@ describe("BatchPayoutClient.preview", () => {
     const invocation = contractInvocation(transaction);
     expect(invocation.functionName.toString()).toBe("preview");
     expect(invocation.args).toHaveLength(1);
-    expect(invocation.args[0]!.switch().name).toBe("scvVec");
+    expect(scValType(invocation.args[0]!)).toBe("scvVec");
+  });
+
+  it("decodes multi-payment preview Receipt correctly", async () => {
+    rpc.simulateTransaction.mockResolvedValue(simulation(receiptValue(2, 3_500n)));
+    const result = await new BatchPayoutClient(clientOptions).preview([PAYMENT_1, PAYMENT_2]);
+    expect(result).toEqual({ count: 2, total: 3_500n });
   });
 });
 
@@ -246,7 +366,7 @@ describe("BatchPayoutClient.maxRecipients", () => {
 });
 
 // ---------------------------------------------------------------------------
-// BatchPayoutClient.chunk (pure, no RPC)
+// BatchPayoutClient.chunk (Issue #53)
 // ---------------------------------------------------------------------------
 
 describe("BatchPayoutClient.chunk", () => {
@@ -259,12 +379,54 @@ describe("BatchPayoutClient.chunk", () => {
     expect(BatchPayoutClient.chunk(recipients, 10)).toEqual([recipients]);
   });
 
-  it("splits exactly on the boundary", () => {
-    const recipients = [PAYMENT_1, PAYMENT_2, PAYMENT_1];
-    const batches = BatchPayoutClient.chunk(recipients, 2);
-    expect(batches).toHaveLength(2);
-    expect(batches[0]).toEqual([PAYMENT_1, PAYMENT_2]);
-    expect(batches[1]).toEqual([PAYMENT_1]);
+  it("splits across exact multiples without creating a trailing empty batch", () => {
+    const p3 = { to: PAYEE, amount: 300n };
+    const p4 = { to: RECIPIENT_2, amount: 400n };
+    const recipients = [PAYMENT_1, PAYMENT_2, p3, p4];
+
+    // 4 items with maxRecipients = 2 -> exactly 2 batches of 2
+    const batches2 = BatchPayoutClient.chunk(recipients, 2);
+    expect(batches2).toHaveLength(2);
+    expect(batches2[0]).toEqual([PAYMENT_1, PAYMENT_2]);
+    expect(batches2[1]).toEqual([p3, p4]);
+
+    // 4 items with maxRecipients = 4 -> exactly 1 batch of 4
+    expect(BatchPayoutClient.chunk(recipients, 4)).toEqual([recipients]);
+
+    // 6 items with maxRecipients = 3 -> exactly 2 batches of 3
+    const recipients6 = [...recipients, PAYMENT_1, PAYMENT_2];
+    const batches3 = BatchPayoutClient.chunk(recipients6, 3);
+    expect(batches3).toHaveLength(2);
+    expect(batches3[0]).toEqual([PAYMENT_1, PAYMENT_2, p3]);
+    expect(batches3[1]).toEqual([p4, PAYMENT_1, PAYMENT_2]);
+  });
+
+  it("splits across remainders properly", () => {
+    const p3 = { to: PAYEE, amount: 300n };
+    const p4 = { to: RECIPIENT_2, amount: 400n };
+    const p5 = { to: PAYEE, amount: 500n };
+    const recipients = [PAYMENT_1, PAYMENT_2, p3, p4, p5];
+
+    // 5 items with maxRecipients = 2 -> 3 batches of [2, 2, 1]
+    const batches2 = BatchPayoutClient.chunk(recipients, 2);
+    expect(batches2).toHaveLength(3);
+    expect(batches2[0]).toEqual([PAYMENT_1, PAYMENT_2]);
+    expect(batches2[1]).toEqual([p3, p4]);
+    expect(batches2[2]).toEqual([p5]);
+
+    // 5 items with maxRecipients = 3 -> 2 batches of [3, 2]
+    const batches3 = BatchPayoutClient.chunk(recipients, 3);
+    expect(batches3).toHaveLength(2);
+    expect(batches3[0]).toEqual([PAYMENT_1, PAYMENT_2, p3]);
+    expect(batches3[1]).toEqual([p4, p5]);
+
+    // 7 items with maxRecipients = 3 -> 3 batches of [3, 3, 1]
+    const recipients7 = [...recipients, PAYMENT_1, PAYMENT_2];
+    const batches7 = BatchPayoutClient.chunk(recipients7, 3);
+    expect(batches7).toHaveLength(3);
+    expect(batches7[0]).toEqual([PAYMENT_1, PAYMENT_2, p3]);
+    expect(batches7[1]).toEqual([p4, p5, PAYMENT_1]);
+    expect(batches7[2]).toEqual([PAYMENT_2]);
   });
 
   it("creates a batch per recipient when maxRecipients is 1", () => {
@@ -276,11 +438,16 @@ describe("BatchPayoutClient.chunk", () => {
   });
 
   it.each([
-    ["zero", 0],
-    ["negative", -1],
-    ["fractional", 1.5],
+    ["zero (0)", 0],
+    ["negative (-1)", -1],
+    ["large negative (-100)", -100],
+    ["fractional (1.5)", 1.5],
+    ["fractional (0.5)", 0.5],
+    ["NaN", Number.NaN],
+    ["Infinity", Number.POSITIVE_INFINITY],
+    ["-Infinity", Number.NEGATIVE_INFINITY],
   ] as const)(
-    "rejects maxRecipients=%s",
+    "rejects invalid maxRecipients=%s (< 1 or non-integer) with ValidationError",
     (_label, maxRecipients) => {
       expect(() => BatchPayoutClient.chunk([PAYMENT_1], maxRecipients)).toThrow(ValidationError);
       expect(() => BatchPayoutClient.chunk([PAYMENT_1], maxRecipients)).toThrow(
