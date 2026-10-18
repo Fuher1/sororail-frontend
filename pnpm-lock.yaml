@@ -90,6 +90,9 @@ importers:
       '@stellar/stellar-sdk':
         specifier: ^17.0.1
         version: 17.0.1
+      sororail-frontend:
+        specifier: file:../..
+        version: 'file:'
     devDependencies:
       '@vitest/coverage-v8':
         specifier: ^2.1.9
@@ -3015,6 +3018,10 @@ packages:
   smol-toml@1.9.1:
     resolution: {integrity: sha512-j7WyPdf0CJoutMzMoPLF/bVXHtKZIT9Rb4eGeEbWw8X2t5oirjPgpL+OpaENZrILYaXqYwnVH+qgUwVbl+pUJQ==}
     engines: {node: '>= 18'}
+
+  'sororail-frontend@file:':
+    resolution: {directory: '', type: directory}
+    engines: {node: '>=20'}
 
   source-map-js@1.2.1:
     resolution: {integrity: sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==}
@@ -6477,6 +6484,8 @@ snapshots:
   smol-toml@1.8.0: {}
 
   smol-toml@1.9.1: {}
+
+  'sororail-frontend@file:': {}
 
   source-map-js@1.2.1: {}
 
