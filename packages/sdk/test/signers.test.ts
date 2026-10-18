@@ -16,7 +16,7 @@ import {
   SigningError,
   type FreighterApi,
 } from "../src/signers/index.js";
-import { SororailError } from "../src/errors/index.js";
+import { SororailError, ValidationError } from "../src/errors/index.js";
 
 const ALICE = "GC4RWN3HH5H5GMD3NT4MOIYC3H3Q3NUF4BFWATGDI7NKRVLRURKHSIMC";
 const BOB = "GBZXN7PIRZGNMHGA7MUUUF4GWPY5AYPV6LY4UV2GL6VJGIQRXFDNMADI";
@@ -234,6 +234,56 @@ describe("FreighterSigner.signTransaction result shapes", () => {
     await expect(attempt).rejects.toBeInstanceOf(SigningError);
     await expect(attempt).rejects.toThrow(/did not sign the transaction/);
     await expect(attempt).rejects.toMatchObject({ cause });
+  });
+});
+
+describe("KeypairSigner constructor", () => {
+  it("accepts a valid Stellar secret key and derives the matching public key", () => {
+    const keypair = Keypair.random();
+    const signer = new KeypairSigner(keypair.secret());
+
+    expect(signer.publicKey).toBe(keypair.publicKey());
+  });
+
+  it("rejects an invalid secret key with a ValidationError rather than a raw exception", () => {
+    expect(() => new KeypairSigner("not-a-valid-secret")).toThrow(ValidationError);
+    expect(() => new KeypairSigner("not-a-valid-secret")).toThrow(
+      "That is not a valid Stellar secret key. It should begin with S and be 56 characters.",
+    );
+  });
+
+  it("preserves the underlying stellar-sdk cause on the ValidationError", () => {
+    let capturedError: unknown;
+    try {
+      new KeypairSigner("invalid-secret");
+    } catch (err) {
+      capturedError = err;
+    }
+
+    expect(capturedError).toBeInstanceOf(ValidationError);
+    expect(capturedError).toBeInstanceOf(SororailError);
+    expect((capturedError as ValidationError).name).toBe("ValidationError");
+    expect((capturedError as ValidationError).message).toBe(
+      "That is not a valid Stellar secret key. It should begin with S and be 56 characters.",
+    );
+    expect((capturedError as ValidationError).cause).toBeDefined();
+    expect((capturedError as ValidationError).cause).toBeInstanceOf(Error);
+  });
+
+  it.each([
+    ["empty string", ""],
+    ["arbitrary non-base32 text", "super-secret-key-that-is-not-stellar"],
+    ["a public key instead of a secret key", ALICE],
+    ["secret with invalid prefix", "GBZXN7PIRZGNMHGA7MUUUF4GWPY5AYPV6LY4UV2GL6VJGIQRXFDNMADI"],
+    ["too short (55 chars)", "S" + "A".repeat(54)],
+    ["too long (57 chars)", "S" + "A".repeat(56)],
+    ["invalid characters", "S" + "0".repeat(55)],
+    ["invalid checksum", "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"],
+  ])("rejects %s with documented ValidationError", (_label, invalidSecret) => {
+    expect(() => new KeypairSigner(invalidSecret)).toThrow(ValidationError);
+    expect(() => new KeypairSigner(invalidSecret)).toThrow(
+      "That is not a valid Stellar secret key. It should begin with S and be 56 characters.",
+    );
   });
 });
 
