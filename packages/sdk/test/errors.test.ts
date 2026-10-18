@@ -47,6 +47,37 @@ describe("the code table", () => {
       expect(message.length, name).toBeGreaterThan(15);
     }
   });
+
+  it("maps every ErrorCode to an entry in errorCodeNames (#240)", () => {
+    for (const [name, code] of Object.entries(ErrorCode)) {
+      expect(
+        errorCodeNames.has(code),
+        `errorCodeNames must contain an entry for ${name} (code ${code})`,
+      ).toBe(true);
+      expect(
+        errorCodeNames.get(code),
+        `errorCodeNames.get(${code}) must match ${name}`,
+      ).toBe(name);
+    }
+  });
+
+  it("provides a user-facing message in errorMessages for every ErrorCode (#241)", () => {
+    for (const [name, code] of Object.entries(ErrorCode)) {
+      const message = errorMessages[name as keyof typeof ErrorCode];
+      expect(
+        typeof message,
+        `errorMessages must have a message for ${name} (code ${code})`,
+      ).toBe("string");
+      expect(
+        message.trim().length,
+        `errorMessages[${name}] must not be empty`,
+      ).toBeGreaterThan(0);
+      expect(
+        message,
+        `errorMessages[${name}] must not be just the variant name`,
+      ).not.toBe(name);
+    }
+  });
 });
 
 describe("contractForCode", () => {

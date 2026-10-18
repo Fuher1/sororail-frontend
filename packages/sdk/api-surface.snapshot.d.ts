@@ -420,6 +420,17 @@ export declare const TESTNET_DEFAULTS: {
     readonly networkPassphrase: Networks.TESTNET;
     readonly nativeToken: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
 };
+/**
+ * Validates network defaults configuration.
+ *
+ * Ensures rpcUrl is a valid parseable URL and networkPassphrase is a non-empty string.
+ * Throws a ValidationError if any requirement is violated.
+ */
+export declare function validateTestnetDefaults(defaults: {
+    rpcUrl: unknown;
+    networkPassphrase: unknown;
+    nativeToken?: unknown;
+}): void;
 
 // ---- src/errors/codes.d.ts ----
 /**
@@ -925,29 +936,30 @@ import type { BaseClient } from "../clients/base.js";
  *
  * @example
  * ```ts
- * const results = await batchRead([
+ * const values = await batchRead([
  *   { client: streamClient, method: "get_balance" },
  *   { client: vestingClient, method: "get_vested" },
  *   { client: escrowClient, method: "get_balance" },
  * ]);
- * // results[0] → { status: "fulfilled", value: ... } | { status: "rejected", reason: ... }
+ * // values[0] → the first successful result, in input order
+ * // if any read rejects, the whole batch rejects
  * ```
  */
 export declare function batchRead<T>(calls: Array<{
     client: BaseClient;
     method: string;
     args?: unknown[];
-}>): Promise<PromiseSettledResult<T>[]>;
+}>): Promise<T[]>;
 /**
- * Like `batchRead` but returns only the successful results, dropping any
- * that failed. Useful when the caller wants to render what succeeded and
- * silently skip broken positions.
+ * Returns one settled result per item in input order. Successful reads keep
+ * their values, while failed reads retain their rejection reasons so callers
+ * can render partial success without losing track of which item failed.
  */
 export declare function batchReadSafe<T>(calls: Array<{
     client: BaseClient;
     method: string;
     args?: unknown[];
-}>): Promise<T[]>;
+}>): Promise<PromiseSettledResult<T>[]>;
 
 // ---- src/utils/scval.d.ts ----
 import { xdr } from "@stellar/stellar-sdk";
